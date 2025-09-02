@@ -1,7 +1,3 @@
-# MorningFlow
-
----
-
 # MorningFlow - Spark + S3 (Flight Delays)
 
 Beginner-friendly Spark job that reads the Databricks flight delays dataset from S3, computes aggregations, and writes results back to S3. Includes `.env` support and AWS preflight checks.
