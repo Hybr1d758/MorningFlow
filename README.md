@@ -1,63 +1,62 @@
-# MorningFlow
+# MorningFlow (Spark + Amazon S3)
 
----
+A simple, reproducible example that reads a public flight delays file, processes it with Apache Spark, and saves summary results back to your Amazon S3 bucket.
 
-# MorningFlow - Spark + S3 (Flight Delays)
+You don’t need to be a programmer to run it. Just follow the steps below.
 
-Beginner-friendly Spark job that reads the Databricks flight delays dataset from S3, computes aggregations, and writes results back to S3. Includes `.env` support and AWS preflight checks.
+## What you’ll get
+- A working Spark job you can run any time
+- Results saved in your S3 bucket (easy to view or download)
+- Optional scheduling with Airflow so it runs every morning
+- Optional email alerts on success/failure
 
-## Quick Start
+## What you need (macOS)
+- An AWS account and an S3 bucket name (example we use: `morningflow`)
+- Homebrew (software installer for Mac)
+- Java 11, Python 3.11, AWS CLI
+
+## 1) One‑time setup (copy/paste)
+Open Terminal and run these in order:
+
 ```bash
-# 1) Create venv & install
+# Go to the project folder
 cd "/Users/edwardjr/Downloads/upwork /Engineering/MorningFlow"
+
+# Create a private Python environment and install tools
 python3.11 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install pyspark==3.5.1 pandas==2.2.2 pyarrow==16.1.0 loguru==0.7.2 boto3==1.34.148 delta-spark==3.2.0 python-dotenv==1.0.1
 
-# 2) Java 11 and AWS CLI
+# Install Java 11 and AWS command line
 brew install --cask temurin@11 && export JAVA_HOME=$(/usr/libexec/java_home -v11)
 brew install awscli
-
-# 3) Credentials (choose ONE)
-aws configure --profile morningflow && export AWS_PROFILE=morningflow
-# or
-printf "AWS_ACCESS_KEY_ID=...\nAWS_SECRET_ACCESS_KEY=...\nAWS_REGION=<region>\nAWS_DEFAULT_REGION=<region>\nBUCKET=morningflow\n" > .env
-set -a; source .env; set +a
-
-# 4) Upload dataset
-mkdir -p data
-curl -L -o data/departuredelays.csv https://raw.githubusercontent.com/databricks/LearningSparkV2/master/databricks-datasets/learning-spark-v2/flights/departuredelays.csv
-aws s3 cp data/departuredelays.csv s3://morningflow/flights/raw/departuredelays.csv
-
-# 5) Run
-python scripts/flight_delays_s3.py --bucket morningflow --sample 100000
 ```
 
-## Prerequisites (macOS)
-- Homebrew
-- Python 3.11 (venv)
-- Java 11 (Temurin)
-- AWS CLI v2
+## 2) Connect to your AWS account
+Pick ONE of the two ways below.
 
-## Configure AWS (profile or .env)
-- Profile (recommended):
+Option A: Use an AWS profile (recommended)
 ```bash
-aws configure --profile morningflow
+aws configure --profile morningflow   # enter Access Key, Secret, region
 export AWS_PROFILE=morningflow
 aws sts get-caller-identity
 ```
-- `.env` (gitignored):
+
+Option B: Use a .env file in this folder
 ```bash
+# Create file named .env with your details (one per line)
 AWS_ACCESS_KEY_ID=YOUR_KEY
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET
-AWS_SESSION_TOKEN=
-AWS_REGION=<your-region>
-AWS_DEFAULT_REGION=<your-region>
+AWS_REGION=us-west-2
+AWS_DEFAULT_REGION=us-west-2
 BUCKET=morningflow
-```
-Load it: `set -a; source .env; set +a`
 
-## Minimal IAM policy
+# Load it for the current terminal session
+set -a; source .env; set +a
+aws sts get-caller-identity
+```
+
+Minimum S3 permissions for your user
 ```json
 {
   "Version": "2012-10-17",
@@ -68,56 +67,65 @@ Load it: `set -a; source .env; set +a`
 }
 ```
 
-## Run the Spark job (full)
+## 3) Put the sample data in your S3 bucket
+```bash
+mkdir -p data
+curl -L -o data/departuredelays.csv \
+  https://raw.githubusercontent.com/databricks/LearningSparkV2/master/databricks-datasets/learning-spark-v2/flights/departuredelays.csv
+aws s3 cp data/departuredelays.csv s3://morningflow/flights/raw/departuredelays.csv
+```
+
+## 4) Run the job
 ```bash
 source .venv/bin/activate
 export JAVA_HOME=$(/usr/libexec/java_home -v11)
-python scripts/flight_delays_s3.py --bucket morningflow --profile morningflow --region <bucket-region>
+python scripts/flight_delays_s3.py --bucket morningflow
 ```
-Outputs:
-- `s3://morningflow/flights/output/avg_delay_by_origin/`
-- `s3://morningflow/flights/output/avg_delay_by_destination/`
-- `s3://morningflow/flights/output/route_stats/`
-- `s3://morningflow/flights/output/daily_delay_counts/`
 
-## Airflow (schedule daily 6 AM PT)
-- DAG: `airflow/dags/morningflow_spark.py`
-- Assumes this project path and a working `.venv`.
-- Quick local run (system Airflow):
+What happens:
+- The script reads your file from `s3://morningflow/flights/raw/departuredelays.csv`
+- It computes summaries (average delays, route stats, etc.)
+- It writes results to `s3://morningflow/flights/output/` in folders:
+  - `avg_delay_by_origin/`
+  - `avg_delay_by_destination/`
+  - `route_stats/`
+  - `daily_delay_counts/`
+
+Check in S3 (Terminal):
+```bash
+aws s3 ls s3://morningflow/flights/output/
+```
+
+## 5) (Optional) Schedule daily with Airflow
+If you want this to run every morning at 6 AM PT.
+
+Install Airflow and start it:
 ```bash
 pip install "apache-airflow==2.9.3" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.11.txt"
-airflow db init
 export AIRFLOW_HOME=~/airflow
+airflow db migrate
 mkdir -p "$AIRFLOW_HOME/dags"
 cp -R airflow/dags/* "$AIRFLOW_HOME/dags/"
-airflow users create --role Admin --username admin --password admin --firstname a --lastname d --email a@d
 airflow webserver -p 8080 &
 airflow scheduler &
 ```
-- In UI: enable `morningflow_flight_delays` (runs 6 AM PT daily). To test now: trigger DAG manually.
 
-## Challenges we encountered (and fixes)
-- Missing AWS CLI / Java 11 → install via Homebrew and set `JAVA_HOME`.
-- Credentials not loaded → use AWS profile or `.env`.
-- AccessDenied (403) → add ListBucket/GetBucketLocation + object R/W.
-- PATH_NOT_FOUND → upload CSV to the expected S3 prefix.
-- Date parsing in Spark ≥3 → handle MMddHHmm with assumed year.
-- .env formatting → one variable per line.
+Open the Airflow UI at http://localhost:8080, find the DAG named `morningflow_flight_delays`, turn it on, and click “Trigger DAG” to run immediately.
 
-## Top 3 long‑term real‑world use cases
-- Airline operations analytics (route/airport KPIs, alerts, staffing).
-- Data lake inputs for ML (delay prediction, optimization, forecasting).
-- BI/reporting via Athena/Databricks/Redshift Spectrum over S3/Delta.
-
-## GitHub
+Email alerts (optional)
 ```bash
-git init
-git add .
-git commit -m "MorningFlow: Spark + S3 flight delays job + README"
-git branch -M main
-git remote add origin git@github.com:<you>/<repo>.git
-git push -u origin main
-```
+# Who should receive emails
+export ALERT_EMAIL="you@example.com"
+# Get success emails too (optional)
+export EMAIL_ON_SUCCESS=true
 
-## Next
-- Switch Airflow to Docker Compose or Databricks Jobs if preferred.
+# Set your SMTP details (example for Gmail with an App Password)
+export AIRFLOW__SMTP__SMTP_HOST="smtp.gmail.com"
+export AIRFLOW__SMTP__SMTP_PORT="587"
+export AIRFLOW__SMTP__SMTP_STARTTLS=True
+export AIRFLOW__SMTP__SMTP_USER="your@gmail.com"
+export AIRFLOW__SMTP__SMTP_PASSWORD="your_app_password"
+export AIRFLOW__SMTP__SMTP_MAIL_FROM="your@gmail.com"
+```
+Restart Airflow after setting these.
+

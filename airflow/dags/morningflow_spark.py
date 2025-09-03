@@ -3,9 +3,8 @@ Airflow DAG: morningflow_flight_delays
 - Purpose: Schedule and trigger the local Spark job that reads flight delays from S3
   and writes aggregations back to S3.
 - Schedule: Daily at 6 AM America/Los_Angeles (PT)
-- How it runs: Uses BashOperator to activate your project's virtualenv and
-  execute the Python script `scripts/flight_delays_s3.py` with the configured
-  bucket and AWS profile.
+- How it runs: Uses BashOperator to execute `scripts/flight_delays_s3.py` with
+  the configured bucket and AWS profile.
 
 Alerts:
 - Email only: set ALERT_EMAIL (comma-separated) and ensure Airflow SMTP is configured.
@@ -18,8 +17,8 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.utils.email import send_email  # uses Airflow's SMTP config
 
-# Project path on the Airflow machine. Update if your path differs.
-PROJECT_DIR = "/Users/edwardjr/Downloads/upwork /Engineering/MorningFlow"
+# Project path (host or container). In Docker image we use /opt/airflow/morningflow
+PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/airflow/morningflow")
 
 # S3 bucket and AWS profile. You can override these via Airflow Variables/Env.
 BUCKET = os.getenv("BUCKET", "morningflow")
@@ -27,7 +26,6 @@ AWS_PROFILE = os.getenv("AWS_PROFILE", "morningflow")
 
 # Email alert configuration via environment (defaults to your address if not set)
 ALERT_EMAILS = [e.strip() for e in os.getenv("ALERT_EMAIL", "eddefnyarkoj@gmail.com").split(",") if e.strip()]
-
 
 
 def _format_context_message(context) -> str:
@@ -81,22 +79,20 @@ with DAG(
 	description="Run the MorningFlow Spark job daily",
 	default_args=default_args,
 ) as dag:
-	# Bash script to activate venv, set Java 11, and run the job.
+	# Bash script: run Python directly (works in container and on host)
 	bash_cmd = f'''
 set -e
 cd "{PROJECT_DIR}"
-source .venv/bin/activate
-export JAVA_HOME=$(/usr/libexec/java_home -v11)
+export JAVA_HOME=${{JAVA_HOME:-/usr/lib/jvm/java-11-openjdk-amd64}}
 python scripts/flight_delays_s3.py --bucket {BUCKET} --profile {AWS_PROFILE}
 '''
 
 	run_flight_delays = BashOperator(
 		task_id="run_flight_delays",
 		bash_command=bash_cmd,
-		env={"AWS_PROFILE": AWS_PROFILE},
+		env={"AWS_PROFILE": AWS_PROFILE, "PROJECT_DIR": PROJECT_DIR},
 		doc_md="""
-		Executes the flight delays Spark job using the local virtualenv and
-		AWS profile for credentials. The job reads from s3a://<bucket>/flights/raw/
+		Executes the flight delays Spark job. The job reads from s3a://<bucket>/flights/raw/
 		and writes aggregations under s3a://<bucket>/flights/output/.
 		""",
 		on_failure_callback=on_failure,
