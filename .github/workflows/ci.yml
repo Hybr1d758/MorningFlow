@@ -41,7 +41,5 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Spark job image
-        run: docker build -f Dockerfile -t morningflow:ci .
 
       - name: Build Airflow image
-        run: docker build -f Dockerfile.airflow -t morningflow-airflow:ci .
