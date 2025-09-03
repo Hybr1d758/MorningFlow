@@ -3,10 +3,7 @@ import sys
 import os
 from typing import Optional
 
-from loguru import logger
 from dotenv import load_dotenv, find_dotenv
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 
@@ -24,7 +21,7 @@ def build_spark_session(app_name: str = "MorningFlow-FlightDelays") -> SparkSess
       environment variables, AWS profile (~/.aws/credentials), or SSO.
     - Enables path-style access (safe default; real S3 ignores endpoint).
     """
-    logger.info("Building SparkSession for S3 access")
+    print("[INFO] Building SparkSession for S3 access")
     spark = (
         SparkSession.builder
         .appName(app_name)
@@ -45,64 +42,9 @@ def build_spark_session(app_name: str = "MorningFlow-FlightDelays") -> SparkSess
 
 
 def preflight_aws(profile: Optional[str], bucket: str, object_key: str, region_env: Optional[str]) -> None:
-    """
-    Validate AWS setup before Spark starts.
-
-    Steps:
-    1) If a profile is provided, set AWS_PROFILE so boto3/SDK use it.
-    2) Call STS to print the active identity (sanity check for credentials).
-    3) Fetch bucket location for region mismatch warning.
-    4) HEAD the input object to warn if it's missing.
-    """
+    """Simplified: only set AWS_PROFILE if provided (let Spark surface errors)."""
     if profile:
         os.environ["AWS_PROFILE"] = profile
-
-    try:
-        sts = boto3.client("sts")
-        ident = sts.get_caller_identity()
-        logger.info(f"AWS identity: {ident['Arn']}")
-    except ProfileNotFound as e:
-        logger.error(f"AWS profile not found: {profile}. Run: aws configure --profile {profile}")
-        sys.exit(2)
-    except NoCredentialsError:
-        logger.error("No AWS credentials found. Set AWS_PROFILE or load .env with AWS_ACCESS_KEY_ID/SECRET.")
-        sys.exit(2)
-
-    s3 = boto3.client("s3")
-    # Bucket region and access
-    try:
-        loc_resp = s3.get_bucket_location(Bucket=bucket)
-        bucket_region = loc_resp.get("LocationConstraint") or "us-east-1"
-        if region_env and region_env != bucket_region:
-            logger.warning(f"AWS_REGION ({region_env}) differs from bucket region ({bucket_region}).")
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in ("AccessDenied", "403", "401"):
-            logger.error(
-                f"Access denied to bucket '{bucket}'. Ensure IAM policy includes s3:ListBucket on arn:aws:s3:::{bucket}."
-            )
-            raise
-        if code in ("NoSuchBucket",):
-            logger.error(f"Bucket does not exist: {bucket}")
-            raise
-        raise
-
-    # Input object presence
-    try:
-        s3.head_object(Bucket=bucket, Key=object_key)
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in ("404", "NoSuchKey", "NotFound"):
-            logger.warning(
-                f"Input not found: s3://{bucket}/{object_key}. If not uploaded, run:\n"
-                f"aws s3 cp data/departuredelays.csv s3://{bucket}/{object_key}"
-            )
-        elif code in ("AccessDenied", "403"):
-            logger.error(
-                f"Access denied to object. Ensure s3:GetObject on arn:aws:s3:::{bucket}/{object_key}"
-            )
-        else:
-            raise
 
 
 def parse_date_column(df: DataFrame) -> DataFrame:
@@ -136,7 +78,7 @@ def read_flight_delays_csv(spark: SparkSession, s3_uri: str) -> DataFrame:
     Read the flight delays CSV from S3. Expected columns typically include:
     date, delay, distance, origin, destination
     """
-    logger.info(f"Reading flight delays CSV from {s3_uri}")
+    print(f"[INFO] Reading flight delays CSV from {s3_uri}")
     df = (
         spark.read.option("header", True)
         .option("inferSchema", True)
@@ -159,7 +101,7 @@ def write_parquet(df: DataFrame, output_path: str, partitions: Optional[list] = 
     writer = df.write.mode("overwrite").format("parquet")
     if partitions:
         writer = writer.partitionBy(*partitions)
-    logger.info(f"Writing Parquet to {output_path}")
+    print(f"[INFO] Writing Parquet to {output_path}")
     writer.save(output_path)
 
 
@@ -280,22 +222,17 @@ def main() -> None:
         if args.sample and args.sample > 0:
             df = df.limit(args.sample)
 
-        logger.info("Sample records from input data:")
+        print("[INFO] Sample records from input data:")
         df.show(10, truncate=False)
 
         compute_and_write_aggregations(df, output_base)
 
         # Confirm some outputs
-        logger.info("Reading back a sample of avg_delay_by_origin")
+        print("[INFO] Reading back a sample of avg_delay_by_origin")
         spark.read.parquet(f"{output_base}/avg_delay_by_origin").show(10, truncate=False)
-        logger.success("Flight delays job completed successfully.")
+        print("[SUCCESS] Flight delays job completed successfully.")
     except Exception as exc:  # keep simple for bootcamp level, but log clearly
-        msg = str(exc)
-        if "AccessDenied" in msg or "403" in msg:
-            logger.error(
-                f"Access denied. Ensure IAM allows: s3:ListBucket on arn:aws:s3:::{bucket} and s3:GetObject/s3:PutObject on arn:aws:s3:::{bucket}/*"
-            )
-        logger.exception(f"Job failed: {exc}")
+        print(f"[ERROR] Job failed: {exc}")
         raise
     finally:
         spark.stop()

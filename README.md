@@ -8,7 +8,6 @@ You don’t need to be a programmer to run it. Just follow the steps below.
 - A working Spark job you can run any time
 - Results saved in your S3 bucket (easy to view or download)
 - Optional scheduling with Airflow so it runs every morning
-- Optional email alerts on success/failure
 
 ## What you need (macOS)
 - An AWS account and an S3 bucket name (example we use: `morningflow`)
@@ -111,21 +110,4 @@ airflow scheduler &
 ```
 
 Open the Airflow UI at http://localhost:8080, find the DAG named `morningflow_flight_delays`, turn it on, and click “Trigger DAG” to run immediately.
-
-Email alerts (optional)
-```bash
-# Who should receive emails
-export ALERT_EMAIL="you@example.com"
-# Get success emails too (optional)
-export EMAIL_ON_SUCCESS=true
-
-# Set your SMTP details (example for Gmail with an App Password)
-export AIRFLOW__SMTP__SMTP_HOST="smtp.gmail.com"
-export AIRFLOW__SMTP__SMTP_PORT="587"
-export AIRFLOW__SMTP__SMTP_STARTTLS=True
-export AIRFLOW__SMTP__SMTP_USER="your@gmail.com"
-export AIRFLOW__SMTP__SMTP_PASSWORD="your_app_password"
-export AIRFLOW__SMTP__SMTP_MAIL_FROM="your@gmail.com"
-```
-Restart Airflow after setting these.
 
